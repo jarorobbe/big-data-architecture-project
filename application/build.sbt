@@ -1,4 +1,4 @@
-name := "Wiki Processor"
+name := "BDA_Project1_Jaro_Robberechts"
 
 version := "1.0"
 
