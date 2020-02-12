@@ -1,3 +1,5 @@
 *.class
 *.log
 data
+application/project
+application/target
