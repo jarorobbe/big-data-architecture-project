@@ -14,6 +14,9 @@ import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.{FileSplit, TextInputFormat}
 import org.apache.spark.rdd.HadoopRDD
 
+import java.util.Calendar
+import java.util.Date
+
 object DataProcessor {
 
 	def main (args: Array[String]) {
@@ -57,11 +60,13 @@ object DataProcessor {
 		// and remove the header form the dataset
 		// We also decode the base64 review_text and remove the '\n' characters
 		// TODO: decode unixtimestamp (field 4)
-		val header = reviewTableRaw.first()
-		val reviewTable = reviewTableRaw.filter(line => line != header).map(line => line.split("\t"))
+		val header1 = reviewTableRaw.first()
+		val reviewTable = reviewTableRaw.filter(line => line != header1).map(line => line.split("\t"))
 				.map(record => List(record(0),record(1),record(2),
 					(new String(java.util.Base64.getMimeDecoder().decode(record(3)))).filter(_ >= ' ')
 					,record(4)))
+
+
 
 		// Map the RDD on a new RDD and only keep the user_id column, the distinct function only takes the unique rows
 		val reviewTableOnlyUsersDistinct = reviewTable.map(record => record(1)).distinct()
@@ -69,20 +74,132 @@ object DataProcessor {
 
 	// Task 2.b: Average number of characters in user review
 
-		// We first replace the row with the length of the review (without spaces)
-		// Then we convert the RDD into a DataFrame in order to calculate the average length
-		val reviewLengthDF = reviewTable.map(record => record(3).filter(_ > ' ').length).toDF("char_count")
-
-		val avgCharCount = reviewLengthDF.select(round(avg("char_count")).as("average_char_count")).show()
-
-	// Task 2.c: Top 10 business with most reviews
-
 
 		
 
+		// First, we only keep the review_text in our dataset
+		// Then we filter out all the whitespaces and save how many records there are in the dataset (necessary for calculating the avergare character count)
+		// Finaly, we reduce the dataset by adding all the values and keeping count of the number of records at the same time
+		// This results in a tuple with the summation of all the number of characters and the number of records, 
+		// we can calcualte the average character count by dividing these numbers
+		// The following condition "_ > ' '" filters out all characters larger than space, it is used to remove all whitespace characters like \n and \t
+
+		val count = reviewTable.map(record => (record(3).filter(_ > ' ').length.toInt, 1)).reduce((x, acc) => (x._1+acc._1, x._2+acc._2))
+		val average = count._1/count._2
+
+		println("Average character count (without whitespaces): " + average)
+
+		// Alternative with DataFrame (a little bit slower):
+		// val reviewLengthDF = reviewTable.map(record => record(3).filter(_ > ' ').length).toDF("char_count")
+		// val avgCharCount = reviewLengthDF.select(round(avg("char_count")).as("average_char_count")).show()
+
+	// Task 2.c: Top 10 business with most reviews
+
+		// First, we create key value pairs: (business_id, 1)
+		// Next we reduce the dataset and add all the 1's with matching business_id
+		// Finaly we sort this dataset by the 2nd value of the pair and take the first 10 items
+		val reviewTableByBusinnesId = reviewTable.map(record => (record(2), 1)).reduceByKey((a,b) => a + b).sortBy(tpl => tpl._2, false).take(10)
+		println("Top 10 business with most reviews:")
+		reviewTableByBusinnesId.foreach(println)
+
 	// Task 2.d: Number of reviews per year
+		
+		// First, we create key value pairs: (Year, 1)
+		// Next, we reduce the dataset by the year and add the 2nd value of the corresponding pairs
+		// This results in a count of the reviews for each year
+		val calendar = Calendar.getInstance()
+		val reviewTableByYear = reviewTable.map(record => {
+				calendar.setTimeInMillis((record(4).toDouble*1000).toLong)
+				val year = calendar.get(Calendar.YEAR)
+				(year, 1)
+			}).reduceByKey((a,b) => a + b).sortBy(tpl => tpl._1)
+
+		println("Number of reviews per year: ")
+		reviewTableByYear.collect().foreach(println)
+
 	// Task 2.e: Time and date of first and last review
+
+		// We can use the min and max function of the RDD in order to calculate the eldest and latest review
+		val min = (reviewTable.map(record => record(4).toDouble).min()*1000).toLong
+		calendar.setTimeInMillis(min)
+		println("Eldest review: " + calendar.getTime())
+		val max = (reviewTable.map(record => record(4).toDouble).max()*1000).toLong
+		calendar.setTimeInMillis(max)
+		println("Latest review: " + calendar.getTime())
+
 	// Task 2.f: Pearson correlation coefficient 
+
+		// X = number of reviews by a user
+		// Y = average number of characters in the reviews of a user
+
+		val X = reviewTable.map(record => (record(1), 1)).reduceByKey((a,b) => a + b)
+		val Y = reviewTable.map(record => (record(1), (record(3).filter(_ > ' ').length.toInt, 1)))
+			.reduceByKey((a,b) => (a._1 + b._1, a._2 + b._2))
+			.map(tpl => (tpl._1, tpl._2._1/tpl._2._2))
+
+		val XavgPair = X.map(tpl => (tpl._2, 1)).reduce((a,b) => (a._1+b._1, a._2+b._2))
+		val Xavg = XavgPair._1/XavgPair._2
+		val YavgPair = Y.map(tpl => (tpl._2, 1)).reduce((a,b) => (a._1+b._1, a._2+b._2))
+		val Yavg = YavgPair._1/YavgPair._2	
+
+		val XandY = X.join(Y).map(tpl => (tpl._1, ((tpl._2._1, tpl._2._1 - Xavg), (tpl._2._2, tpl._2._2 - Yavg))))
+
+		val part1 = XandY.map(tpl => (tpl._2._1._2 * tpl._2._2._2)).reduce((a,b) => a + b)
+		val part2 = X.map(tpl => (scala.math.pow((tpl._2 - Xavg), 2))).reduce((a,b) => a + b)
+		val part3 = Y.map(tpl => (scala.math.pow((tpl._2 - Yavg), 2))).reduce((a,b) => a + b)
+
+		println("Pearson correlation: " + (part1/(scala.math.sqrt(part2)*scala.math.sqrt(part3))))
+
+
+// --------------------------------------BUSINESS TABLE---------------------------------------- //
+	
+	// Task 3.a: Average business rating in each city
+
+		// First we clean the raw data from the business table (the same way as we cleaned the reviews table)
+		val header2 = businessTableRaw.first()
+		val businessTable = businessTableRaw.filter(line => line != header2).map(line => line.split("\t").toList)
+
+		// We take the city and the rating and keep for every rating a counter inside a tuple
+		// We then reduce the RDD by key (cities), for each city we add the ratings and count how many ratings there are
+		// Finaly, we divide for every city the sum of the ratings by the number of ratings in that city
+		val ratingSum = businessTable.map(record => (record(3), (record(8).toString.toFloat, 1)))
+			.reduceByKey((a,b) => (a._1+b._1, a._2+b._2))
+			.map(tpl => (tpl._1, tpl._2._1/tpl._2._2))
+
+		println("First 10 cities with their average business rating:")
+		ratingSum.take(10).foreach(println)
+
+
+	// Task 3.b: Top 10 most frequent categories in the data
+
+		// We start by splitting the category field and removing unnecessary whitespaces
+		// Next, we explode the array of categories (all the elements of the arrays in the category column become separate rows)
+		// Finlay, we can map a counter to each category, reduce the categories and count their occurances and sort them by number of occurances
+		val categoryFrequency = businessTable.map(record => record(10).toString.filter(x => ((x > ' ') && (x != '"'))).split(","))
+			.flatMap(array => array)
+			.map(category => (category, 1))
+			.reduceByKey((a,b) => a + b)
+			.sortBy(tpl => tpl._2, false)
+			
+		println("Top 10 most frequent categories:")
+		categoryFrequency.take(10).foreach(println)
+
+
+	// Task 3.c: Geopgraphical centroid of region (postal code)
+
+		// We start by cleaning the postal codes (no '"' characters) and adding a counter to the latitude and longitude 
+		// Next, we calculate the sum of the lat and long, and the number of rows for each postal code
+		// We then use these values to calculate the mean lat and long for every postal code
+		val geopgraphicalCentroid = businessTable.map(record => (record(5).filter(_ != '"'), ((record(6).toString.toFloat, 1), (record(7).toString.toFloat, 1))))
+			.reduceByKey((a,b) => ((a._1._1+b._1._1, a._1._2+b._1._2),(a._2._1+b._2._1,a._2._2+b._2._2)))
+			.map(tpl => (tpl._1, (tpl._2._1._1/tpl._2._1._2, tpl._2._2._1/tpl._2._2._2)))
+
+		println("First 10 regions with their geopgraphical centroid:")
+		geopgraphicalCentroid.take(10).foreach(println)
+
+
+// -------------------------------------FRIENDSHIP GRAPH--------------------------------------- //
+		sc.stop()
 	}
 
 }
