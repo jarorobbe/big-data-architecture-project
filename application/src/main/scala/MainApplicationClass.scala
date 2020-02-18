@@ -16,6 +16,8 @@ import org.apache.spark.rdd.HadoopRDD
 
 import java.util.Calendar
 import java.util.Date
+import java.io.PrintWriter
+import java.io.File
 
 object DataProcessor {
 
@@ -23,6 +25,8 @@ object DataProcessor {
 
 		val appName = "Big Data Architecture - Project 1"
 		val master = "local"
+
+		val pw = new PrintWriter(new File("output.txt"))
 
 		// Initialize SparkContext
 		val conf = new SparkConf().setAppName(appName).setMaster(master)
@@ -43,18 +47,22 @@ object DataProcessor {
 
 	// Task 1: Create RDDs from the data and count the records
 
+		pw.write("\n\n----------Task 1----------\n\n")
+
 		val reviewTableRaw = sc.textFile(directory + reviewFileName)
-		println("Review Table count: " + reviewTableRaw.count())
+		pw.write("Review Table count: " + reviewTableRaw.count() + "\n")
 
 		val businessTableRaw = sc.textFile(directory + businessFileName)	
-		println("Business Table count: " + businessTableRaw.count())
+		pw.write("Business Table count: " + businessTableRaw.count() + "\n")
 
 		val friendshipGraphRaw = sc.textFile(directory + friendshipFileName)	
-		println("Friendship Graph count: " + friendshipGraphRaw.count())
+		pw.write("Friendship Graph count: " + friendshipGraphRaw.count() + "\n")
 
 // --------------------------------------REVIEW TABLE------------------------------------------ //
 
 	// Task 2.a: Distinct users in dataset
+
+		pw.write("\n\n----------Task 2a---------\n\n")
 
 		// Initially we split each string on each row into a list
 		// and remove the header form the dataset
@@ -70,11 +78,12 @@ object DataProcessor {
 
 		// Map the RDD on a new RDD and only keep the user_id column, the distinct function only takes the unique rows
 		val reviewTableOnlyUsersDistinct = reviewTable.map(record => record(1)).distinct()
-		println("Distinct users: " + reviewTableOnlyUsersDistinct.count())
+		pw.write("Distinct users: " + reviewTableOnlyUsersDistinct.count() + "\n")
 
 	// Task 2.b: Average number of characters in user review
 
 
+		pw.write("\n\n----------Task 2b---------\n\n")
 		
 
 		// First, we only keep the review_text in our dataset
@@ -87,7 +96,7 @@ object DataProcessor {
 		val count = reviewTable.map(record => (record(3).filter(_ > ' ').length.toInt, 1)).reduce((x, acc) => (x._1+acc._1, x._2+acc._2))
 		val average = count._1/count._2
 
-		println("Average character count (without whitespaces): " + average)
+		pw.write("Average character count (without whitespaces): " + average + "\n")
 
 		// Alternative with DataFrame (a little bit slower):
 		// val reviewLengthDF = reviewTable.map(record => record(3).filter(_ > ' ').length).toDF("char_count")
@@ -95,14 +104,18 @@ object DataProcessor {
 
 	// Task 2.c: Top 10 business with most reviews
 
+		pw.write("\n\n----------Task 2c---------\n\n")
+
 		// First, we create key value pairs: (business_id, 1)
 		// Next we reduce the dataset and add all the 1's with matching business_id
 		// Finaly we sort this dataset by the 2nd value of the pair and take the first 10 items
 		val reviewTableByBusinnesId = reviewTable.map(record => (record(2), 1)).reduceByKey((a,b) => a + b).sortBy(tpl => tpl._2, false).take(10)
-		println("Top 10 business with most reviews:")
-		reviewTableByBusinnesId.foreach(println)
+		pw.write("Top 10 business with most reviews:" + "\n")
+		reviewTableByBusinnesId.foreach(x => pw.write(x.toString + "\n"))
 
 	// Task 2.d: Number of reviews per year
+
+		pw.write("\n\n----------Task 2d---------\n\n")
 		
 		// First, we create key value pairs: (Year, 1)
 		// Next, we reduce the dataset by the year and add the 2nd value of the corresponding pairs
@@ -114,20 +127,24 @@ object DataProcessor {
 				(year, 1)
 			}).reduceByKey((a,b) => a + b).sortBy(tpl => tpl._1)
 
-		println("Number of reviews per year: ")
-		reviewTableByYear.collect().foreach(println)
+		pw.write("Number of reviews per year: " + "\n")
+		reviewTableByYear.collect().foreach(x => pw.write(x.toString + "\n"))
 
 	// Task 2.e: Time and date of first and last review
+
+		pw.write("\n\n----------Task 2e---------\n\n")
 
 		// We can use the min and max function of the RDD in order to calculate the eldest and latest review
 		val min = (reviewTable.map(record => record(4).toDouble).min()*1000).toLong
 		calendar.setTimeInMillis(min)
-		println("Eldest review: " + calendar.getTime())
+		pw.write("Eldest review: " + calendar.getTime() + "\n")
 		val max = (reviewTable.map(record => record(4).toDouble).max()*1000).toLong
 		calendar.setTimeInMillis(max)
-		println("Latest review: " + calendar.getTime())
+		pw.write("Latest review: " + calendar.getTime() + "\n")
 
 	// Task 2.f: Pearson correlation coefficient 
+
+		pw.write("\n\n----------Task 2f---------\n\n")
 
 		// X = number of reviews by a user
 		// Y = average number of characters in the reviews of a user
@@ -148,12 +165,14 @@ object DataProcessor {
 		val part2 = X.map(tpl => (scala.math.pow((tpl._2 - Xavg), 2))).reduce((a,b) => a + b)
 		val part3 = Y.map(tpl => (scala.math.pow((tpl._2 - Yavg), 2))).reduce((a,b) => a + b)
 
-		println("Pearson correlation: " + (part1/(scala.math.sqrt(part2)*scala.math.sqrt(part3))))
+		pw.write("Pearson correlation: " + (part1/(scala.math.sqrt(part2)*scala.math.sqrt(part3))) + "\n")
 
 
 // --------------------------------------BUSINESS TABLE---------------------------------------- //
 	
 	// Task 3.a: Average business rating in each city
+
+		pw.write("\n\n----------Task 3a---------\n\n")
 
 		// First we clean the raw data from the business table (the same way as we cleaned the reviews table)
 		val header2 = businessTableRaw.first()
@@ -166,11 +185,13 @@ object DataProcessor {
 			.reduceByKey((a,b) => (a._1+b._1, a._2+b._2))
 			.map(tpl => (tpl._1, tpl._2._1/tpl._2._2))
 
-		println("First 10 cities with their average business rating:")
-		ratingSum.take(10).foreach(println)
+		pw.write("First 10 cities with their average business rating:" + "\n")
+		ratingSum.take(10).foreach(x => pw.write(x.toString + "\n"))
 
 
 	// Task 3.b: Top 10 most frequent categories in the data
+
+		pw.write("\n\n----------Task 3b---------\n\n")
 
 		// We start by splitting the category field and removing unnecessary whitespaces
 		// Next, we explode the array of categories (all the elements of the arrays in the category column become separate rows)
@@ -181,11 +202,13 @@ object DataProcessor {
 			.reduceByKey((a,b) => a + b)
 			.sortBy(tpl => tpl._2, false)
 			
-		println("Top 10 most frequent categories:")
-		categoryFrequency.take(10).foreach(println)
+		pw.write("Top 10 most frequent categories:" + "\n")
+		categoryFrequency.take(10).foreach(x => pw.write(x.toString + "\n"))
 
 
 	// Task 3.c: Geopgraphical centroid of region (postal code)
+
+		pw.write("\n\n----------Task 3c---------\n\n")
 
 		// We start by cleaning the postal codes (no '"' characters) and adding a counter to the latitude and longitude 
 		// Next, we calculate the sum of the lat and long, and the number of rows for each postal code
@@ -194,12 +217,13 @@ object DataProcessor {
 			.reduceByKey((a,b) => ((a._1._1+b._1._1, a._1._2+b._1._2),(a._2._1+b._2._1,a._2._2+b._2._2)))
 			.map(tpl => (tpl._1, (tpl._2._1._1/tpl._2._1._2, tpl._2._2._1/tpl._2._2._2)))
 
-		println("First 10 regions with their geopgraphical centroid:")
-		geopgraphicalCentroid.take(10).foreach(println)
+		pw.write("First 10 regions with their geopgraphical centroid:" + "\n")
+		geopgraphicalCentroid.take(10).foreach(x => pw.write(x.toString + "\n"))
 
 
 // -------------------------------------FRIENDSHIP GRAPH--------------------------------------- //
 		sc.stop()
+		pw.close()
 	}
 
 }
